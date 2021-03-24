@@ -765,25 +765,7 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
     
     double plan_length = 0; // check cumulative Euclidean distance along the plan
 
-    cv::Mat mask, dist, dist_32f;
-    // Convert costmap to opencv Mat    
-    unsigned char *char_map = costmap.getCharMap();
-    cv::Size map_size(costmap.getSizeInCellsX(), costmap.getSizeInCellsY());
-    cv::Mat map = cv::Mat(map_size, CV_8UC1, char_map).clone();
 
-    // set all free to space 255, lethal and unknown to 0
-    cv::inRange(map, 0, 0, mask);
-    map = 0;
-    map.setTo(255, mask);
-
-    double robot_yaw = tf2::getYaw(robot_pose.pose.orientation);
-    double angle = (robot_yaw*180)/M_PI;
-    cv::Mat rotation_matrix = cv::getRotationMatrix2D(cv::Point2f(map.cols/2, map.rows/2), angle, 1);
-    //cv::warpAffine(map, map, rotation_matrix, map.size());
-
-    cv::distanceTransform(map, dist_32f, cv::DIST_L2, 3);
-    cv::normalize(dist_32f, dist_32f, 0, 255, cv::NORM_MINMAX);
-    dist_32f.convertTo(dist, CV_8U);
     geometry_msgs::PoseStamped goal_pose;
 
     //now we'll transform until points are outside of our distance threshold
@@ -803,12 +785,30 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
       ++i;
     }
 
+    cv::Mat mask, dist, dist_32f;
+    // Convert costmap to opencv Mat    
+    unsigned char *char_map = costmap.getCharMap();
+    cv::Size map_size(costmap.getSizeInCellsX(), costmap.getSizeInCellsY());
+    cv::Mat map = cv::Mat(map_size, CV_8UC1, char_map).clone();
+
+    // set all free to space 255, lethal and unknown to 0
+    cv::inRange(map, 0, 0, mask);
+    map = 0;
+    map.setTo(255, mask);
+
+    double robot_yaw = tf2::getYaw(goal_pose.pose.orientation);
+    double angle = (robot_yaw*180)/M_PI;
+    cv::Mat rotation_matrix = cv::getRotationMatrix2D(cv::Point2f(map.cols/2, map.rows/2), angle, 1);
+    cv::warpAffine(map, map, rotation_matrix, map.size());
+
+    cv::distanceTransform(map, dist_32f, cv::DIST_L2, 3);
+    cv::normalize(dist_32f, dist_32f, 0, 255, cv::NORM_MINMAX);
+    dist_32f.convertTo(dist, CV_8U);
+
     double nearest_x = 0;
     double nearest_y = 0;
     double nearest_sq_dist = costmap.getSizeInMetersX() * costmap.getSizeInMetersX() * costmap.getSizeInMetersX();
     float road_threshold = 3.0;
-
-    geometry_msgs::PoseStamped tmp, dst;
 
     for(int y=0; y < dist.rows; y++) {
       uchar* map_values = map.ptr<uchar>(y);
@@ -819,14 +819,8 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
         uchar dist_value = distance_values[x];
 
         if(map_value == 255 && dist_value > road_threshold) {
-          tmp.header.stamp = ros::Time::now();
-          tmp.header.frame_id = global_pose.header.frame_id;
-          tmp.pose.position.x = global_pose.pose.position.x + ((x - (map.rows / 2)) * costmap.getResolution());
-          tmp.pose.position.y = global_pose.pose.position.y + ((y - (map.cols / 2)) * costmap.getResolution());
-
-          tf2::doTransform(tmp, dst, global_to_plan_transform);
-          double dist_x = dst.pose.position.x;
-          double dist_y = dst.pose.position.y;
+          double dist_x = robot_pose.pose.position.x + ((x - (map.rows / 2)) * costmap.getResolution());
+          double dist_y = robot_pose.pose.position.y + ((y - (map.cols / 2)) * costmap.getResolution());
 
           double x_diff = dist_x - goal_pose.pose.position.x;
           double y_diff = dist_y - goal_pose.pose.position.y;
