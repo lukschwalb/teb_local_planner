@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   costmap_2d
   costmap_converter
   cmake_modules
+  cv_bridge
   dynamic_reconfigure
   geometry_msgs
   interactive_markers
@@ -151,6 +152,7 @@ catkin_package(
 	base_local_planner
 	costmap_2d
 	costmap_converter
+  cv_bridge
 	dynamic_reconfigure
 	geometry_msgs
 	interactive_markers

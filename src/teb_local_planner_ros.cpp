@@ -43,6 +43,9 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/highgui/highgui.hpp>
+
 // MBF return codes
 #include <mbf_msgs/ExePathResult.h>
 
@@ -171,7 +174,10 @@ void TebLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costm
     
     // validate optimization footprint and costmap footprint
     validateFootprints(robot_model->getInscribedRadius(), robot_inscribed_radius_, cfg_.obstacles.min_obstacle_dist);
-        
+    
+    goal_publisher = nh.advertise<geometry_msgs::PoseStamped>("goal_pose", 1);
+    pose_publisher = nh.advertise<geometry_msgs::PoseStamped>("compare_pose", 1);
+
     // setup callback for custom obstacles
     custom_obst_sub_ = nh.subscribe("obstacles", 1, &TebLocalPlannerROS::customObstacleCB, this);
 
@@ -717,6 +723,9 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
     geometry_msgs::TransformStamped plan_to_global_transform = tf.lookupTransform(global_frame, ros::Time(), plan_pose.header.frame_id, plan_pose.header.stamp,
                                                                                   plan_pose.header.frame_id, ros::Duration(cfg_.robot.transform_tolerance));
 
+    geometry_msgs::TransformStamped global_to_plan_transform = tf.lookupTransform(plan_pose.header.frame_id, plan_pose.header.stamp, global_frame, ros::Time(),
+                                                                                  global_frame, ros::Duration(cfg_.robot.transform_tolerance));
+
     //let's get the pose of the robot in the frame of the plan
     geometry_msgs::PoseStamped robot_pose;
     tf.transform(global_pose, robot_pose, plan_pose.header.frame_id);
@@ -727,7 +736,6 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
     dist_threshold *= 0.85; // just consider 85% of the costmap size to better incorporate point obstacle that are
                            // located on the border of the local costmap
     
-
     int i = 0;
     double sq_dist_threshold = dist_threshold * dist_threshold;
     double sq_dist = 1e10;
@@ -754,17 +762,35 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
       }
     }
     
-    geometry_msgs::PoseStamped newer_pose;
     
     double plan_length = 0; // check cumulative Euclidean distance along the plan
-    
+
+    cv::Mat mask, dist, dist_32f;
+    // Convert costmap to opencv Mat    
+    unsigned char *char_map = costmap.getCharMap();
+    cv::Size map_size(costmap.getSizeInCellsX(), costmap.getSizeInCellsY());
+    cv::Mat map = cv::Mat(map_size, CV_8UC1, char_map).clone();
+
+    // set all free to space 255, lethal and unknown to 0
+    cv::inRange(map, 0, 0, mask);
+    map = 0;
+    map.setTo(255, mask);
+
+    double robot_yaw = tf2::getYaw(robot_pose.pose.orientation);
+    double angle = (robot_yaw*180)/M_PI;
+    cv::Mat rotation_matrix = cv::getRotationMatrix2D(cv::Point2f(map.cols/2, map.rows/2), angle, 1);
+    //cv::warpAffine(map, map, rotation_matrix, map.size());
+
+    cv::distanceTransform(map, dist_32f, cv::DIST_L2, 3);
+    cv::normalize(dist_32f, dist_32f, 0, 255, cv::NORM_MINMAX);
+    dist_32f.convertTo(dist, CV_8U);
+    geometry_msgs::PoseStamped goal_pose;
+
     //now we'll transform until points are outside of our distance threshold
     while(i < (int)global_plan.size() && sq_dist <= sq_dist_threshold && (max_plan_length<=0 || plan_length <= max_plan_length))
     {
       const geometry_msgs::PoseStamped& pose = global_plan[i];
-      tf2::doTransform(pose, newer_pose, plan_to_global_transform);
-
-      transformed_plan.push_back(newer_pose);
+      goal_pose = pose;
 
       double x_diff = robot_pose.pose.position.x - global_plan[i].pose.position.x;
       double y_diff = robot_pose.pose.position.y - global_plan[i].pose.position.y;
@@ -776,6 +802,58 @@ bool TebLocalPlannerROS::transformGlobalPlan(const tf2_ros::Buffer& tf, const st
 
       ++i;
     }
+
+    double nearest_x = 0;
+    double nearest_y = 0;
+    double nearest_sq_dist = costmap.getSizeInMetersX() * costmap.getSizeInMetersX() * costmap.getSizeInMetersX();
+    float road_threshold = 3.0;
+
+    geometry_msgs::PoseStamped tmp, dst;
+
+    for(int y=0; y < dist.rows; y++) {
+      uchar* map_values = map.ptr<uchar>(y);
+      uchar* distance_values = dist.ptr<uchar>(y);
+
+      for(int x=0; x < dist.cols; x++) {
+        int map_value = map_values[x];
+        uchar dist_value = distance_values[x];
+
+        if(map_value == 255 && dist_value > road_threshold) {
+          tmp.header.stamp = ros::Time::now();
+          tmp.header.frame_id = global_pose.header.frame_id;
+          tmp.pose.position.x = global_pose.pose.position.x + ((x - (map.rows / 2)) * costmap.getResolution());
+          tmp.pose.position.y = global_pose.pose.position.y + ((y - (map.cols / 2)) * costmap.getResolution());
+
+          tf2::doTransform(tmp, dst, global_to_plan_transform);
+          double dist_x = dst.pose.position.x;
+          double dist_y = dst.pose.position.y;
+
+          double x_diff = dist_x - goal_pose.pose.position.x;
+          double y_diff = dist_y - goal_pose.pose.position.y;
+          double new_sq_dist = x_diff * x_diff + y_diff * y_diff;
+
+          if(new_sq_dist < nearest_sq_dist) {
+            nearest_sq_dist = new_sq_dist;
+            nearest_x = dist_x;
+            nearest_y = dist_y;
+          }
+        }
+      }
+    }
+    geometry_msgs::PoseStamped closest_pose, newer_pose;
+
+    closest_pose.header.stamp = ros::Time::now();
+    closest_pose.header.frame_id = goal_pose.header.frame_id;
+    closest_pose.pose.position.x = nearest_x;
+    closest_pose.pose.position.y = nearest_y;
+    closest_pose.pose.orientation = goal_pose.pose.orientation;
+
+    tf2::doTransform(closest_pose, newer_pose, plan_to_global_transform);
+    transformed_plan.push_back(newer_pose);
+    goal_publisher.publish(goal_pose);
+    pose_publisher.publish(newer_pose);
+
+
         
     // if we are really close to the goal (<sq_dist_threshold) and the goal is not yet reached (e.g. orientation error >>0)
     // the resulting transformed plan can be empty. In that case we explicitly inject the global goal.
