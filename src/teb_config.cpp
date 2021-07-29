@@ -46,7 +46,7 @@ void TebConfig::loadRosParamFromNodeHandle(const ros::NodeHandle& nh)
     
   nh.param("odom_topic", odom_topic, odom_topic);
   nh.param("map_frame", map_frame, map_frame);
-  
+
   // Trajectory
   nh.param("teb_autosize", trajectory.teb_autosize, trajectory.teb_autosize);
   nh.param("dt_ref", trajectory.dt_ref, trajectory.dt_ref);
@@ -108,7 +108,8 @@ void TebConfig::loadRosParamFromNodeHandle(const ros::NodeHandle& nh)
   nh.param("obstacle_proximity_ratio_max_vel",  obstacles.obstacle_proximity_ratio_max_vel, obstacles.obstacle_proximity_ratio_max_vel);
   nh.param("obstacle_proximity_lower_bound", obstacles.obstacle_proximity_lower_bound, obstacles.obstacle_proximity_lower_bound);
   nh.param("obstacle_proximity_upper_bound", obstacles.obstacle_proximity_upper_bound, obstacles.obstacle_proximity_upper_bound);
-  
+  nh.param("obstacle_visual_size", obstacles.obstacle_visual_size, obstacles.obstacle_visual_size);
+
   // Optimization
   nh.param("no_inner_iterations", optim.no_inner_iterations, optim.no_inner_iterations);
   nh.param("no_outer_iterations", optim.no_outer_iterations, optim.no_outer_iterations);

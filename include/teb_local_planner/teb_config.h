@@ -64,7 +64,7 @@ public:
 
   std::string odom_topic; //!< Topic name of the odometry message, provided by the robot driver or simulator
   std::string map_frame; //!< Global planning frame
-
+  
   //! Trajectory related parameters
   struct Trajectory
   {
@@ -136,6 +136,8 @@ public:
     double obstacle_proximity_ratio_max_vel; //!< Ratio of the maximum velocities used as an upper bound when reducing the speed due to the proximity to a static obstacles
     double obstacle_proximity_lower_bound; //!< Distance to a static obstacle for which the velocity should be lower
     double obstacle_proximity_upper_bound; //!< Distance to a static obstacle for which the velocity should be higher
+    double obstacle_visual_size;
+
   } obstacles; //!< Obstacle related parameters
 
 
@@ -305,6 +307,7 @@ public:
     obstacles.obstacle_proximity_ratio_max_vel = 1;
     obstacles.obstacle_proximity_lower_bound = 0;
     obstacles.obstacle_proximity_upper_bound = 0.5;
+    obstacles.obstacle_visual_size = 0.1;
 
     // Optimization
 
